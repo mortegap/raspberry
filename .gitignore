@@ -1,0 +1,6 @@
+# SECRETS
+.env.*
+
+# NGINX
+nginx/letsencrypt/*
+nginx/data/*

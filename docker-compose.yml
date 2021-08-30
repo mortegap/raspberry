@@ -1,0 +1,197 @@
+version: "3"
+
+services:
+  nginx:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    volumes:
+      - ./nginx/config.json:/app/config/production.json
+      - ./nginx/data:/data
+      - ./nginx/letsencrypt:/etc/letsencrypt
+    depends_on:
+      - nginx-db
+    ports:
+      - 80:80
+      - 443:440
+      - 82:81
+    restart: unless-stopped
+  nginx-db:
+    image: yobasystems/alpine-mariadb:latest
+    restart: unless-stopped
+    env_file:
+      - ./.env.nginx
+    volumes:    
+      - /srv/dev-disk-by-label-Files/Config/NGINXDB:/var/lib/mysql
+    expose:
+      - "3306"
+
+  duckdns:
+    image: linuxserver/duckdns
+    container_name: duckdns
+    environment:
+      - TZ=Europe/Madrid
+      - SUBDOMAINS=mortegap
+      - TOKEN=aa0f140d-36f5-452d-b159-b3368ef441e1
+      - LOG_FILE=false
+    restart: always
+
+  wireguard:
+    image: ghcr.io/linuxserver/wireguard
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Madrid
+      - SERVERURL=mortegap.duckdns.org #optional
+      - SERVERPORT=51820 #optional
+      - PEERS=4 #optional
+      - PEERDNS=192.168.1.21,1.1.1.1 #optional
+      - INTERNAL_SUBNET=192.168.1.0 #optional
+      - ALLOWEDIPS=0.0.0.0/0 #optional
+    volumes:
+      - /mnt/wd/wireguard:/config
+      - /lib/modules:/lib/modules
+    ports:
+      - 51820:51820/udp
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
+
+  pihole:
+    container_name: pihole
+    image: pihole/pihole:latest
+    env_file:
+      - ./.env.pihole
+    volumes:
+      - './pihole/etc-pihole/:/etc/pihole/'
+      - './pihole/etc-dnsmasq.d/:/etc/dnsmasq.d/'
+    dns:
+      - 127.0.0.1
+      - 1.1.1.1  
+    # Required for the DHCP server
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "67:67/udp"
+    restart: unless-stopped
+
+  netdata:
+    image: netdata/netdata:v1.19.0
+    restart: always
+    ports: 
+      - 8080:19999
+    expose:
+      - "19999"
+    volumes:
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - netdata-etc:/etc/netdata
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - apparmor=unconfined
+    environment:
+      - VIRTUAL_PORT=19999
+      - DOCKER_HOST=proxy:2375
+      - PGID=999
+      - VIRTUALIZATION=kvmi
+
+        #samba:
+        #  image: dperson/samba:rpi
+        #  restart: always
+        #  command: '-u "ubuntu;M0rt3g4." -s "media;/media;yes;yes" -s "prueba;/prueba;yes;yes;yes;all;none;;comment1"'
+        #  stdin_open: true
+        #  tty: true
+        #  ports:
+        #    - 139:130
+        #    - 445:445
+        #  volumes:
+        #    - /usr/share/zoneinfo/Europe/Madrid:/etc/localtime
+        #    - /mnt/wd/media:/media
+        #    - /home/ubuntu/prueba:/prueba 
+
+  plex:
+    image: jaymoulin/plex:latest
+    ports:
+      - 32400
+      - 33400
+    volumes:
+      - /mnt/wd/Plex Media Server:/root/Library/Application Support/Plex Media Server
+      - /mnt/wd/media:/media
+      - /mnt/wd/tmp:/tmp
+    restart: unless-stopped
+    networks: 
+      lan:
+        ipv4_address: 192.168.1.22
+
+  tautulli:
+    image: ghcr.io/linuxserver/tautulli
+    container_name: tautulli
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Madrid
+    volumes:
+      - /mnt/wd/Plex Media Server/tautulli:/config
+      - /mnt/wd/Plex Media Server/tautulli-logs:/logs
+    ports:
+      - 8181:8181
+    restart: unless-stopped
+    networks:
+      lan:
+        ipv4_address: 192.168.1.23
+
+  transmission:
+    image : jaymoulin/transmission
+    command: transmission-daemon -f -g /config
+    environment:
+      - USER=ubuntu #optional
+      - PASS=M0rt3g4. #optional
+    volumes:
+      - /mnt/wd/transmission:/config
+      - /mnt/wd/media:/downloads
+      #- /mnt/wd/media:/output
+      #- /mnt/wd/torrents:/to_download
+    ports:
+      - 9091:9091
+      - 51413:51413
+      - 51413:51413/udp
+    expose:
+      - 9091
+    restart: unless-stopped
+
+          #flexget:
+          #  build: flexget-arm
+          #  volumes:
+          #    - /mnt/wd/flexget:/config
+          #    - /mnt/wd/torrents:/downloads
+          #    - /mnt/wd/media:/storage
+          #  ports:
+          #    - 5050:5050
+          #  environment:
+          #    - TORRENT_PLUGIN=transmission
+          #    - FG_WEBUI_PASSWD=123456
+          #  restart: unless-stopped
+          #  links:
+          #    - transmission
+
+networks:
+  lan:
+    driver: macvlan
+    driver_opts:
+      parent: eth0
+    ipam:
+      config:
+        - subnet: "192.168.1.0/24"       
+          gateway: "192.168.1.1"
+
+volumes: 
+  netdata-etc:
